@@ -37,6 +37,28 @@ print("✅ Voice model ready")
 memory_client = chromadb.PersistentClient(path="./memory")
 conversation_memory = memory_client.get_or_create_collection("conversations")
 facts_memory = memory_client.get_or_create_collection("facts")
+# ── Short Term Conversation History ───────────────────────
+# Keeps last 10 messages in memory for context
+conversation_history = []
+MAX_HISTORY = 10
+
+def add_to_history(role: str, content: str):
+    """Add message to short term history"""
+    conversation_history.append({
+        "role": role,
+        "content": content
+    })
+    # Keep only last MAX_HISTORY messages
+    if len(conversation_history) > MAX_HISTORY:
+        conversation_history.pop(0)
+
+def get_history() -> list:
+    """Get current conversation history"""
+    return conversation_history.copy()
+
+def clear_history():
+    """Clear conversation history"""
+    conversation_history.clear()
 
 def save_conversation(user_msg: str, bot_reply: str):
     timestamp = str(datetime.now().timestamp())
@@ -418,10 +440,14 @@ Actions:
 - CHAT: general conversation
 """
 
-    messages = [
-        {"role": "system", "content": system},
-        {"role": "user", "content": user_message}
-    ]
+    # Build messages with full conversation history
+    messages = [{"role": "system", "content": system}]
+    
+    # Add last 10 messages for context
+    messages.extend(get_history())
+    
+    # Add current message
+    messages.append({"role": "user", "content": user_message})
 
     if groq_client:
         try:
@@ -504,6 +530,9 @@ def execute(decision: dict) -> tuple:
         return f"📝 Remembered:\n_{value}_", None
     elif action == "CHAT":
         return value, None
+    elif action == "CLEAR_HISTORY":
+        clear_history()
+        return "🧹 Conversation history cleared! Fresh start.", None
     else:
         return value, None
 
@@ -548,9 +577,18 @@ async def handle_message(update: Update,
     await send_reply(update, "🤔 thinking...")
 
     try:
+        # Add user message to history BEFORE thinking
+        add_to_history("user", user_message)
+        
         decision = think(user_message)
         text_result, file_path = execute(decision)
+        
+        # Add AI response to history AFTER thinking
+        add_to_history("assistant", text_result[:500])
+        
+        # Save to long term memory too
         save_conversation(user_message, text_result)
+        
         await send_reply(update, text_result, file_path)
     except Exception as e:
         await send_reply(update, f"❌ Error: {str(e)}")
@@ -574,11 +612,17 @@ async def handle_voice(update: Update,
         text = await transcribe_voice(voice_path)
         await send_reply(update, f"🎤 I heard: _{text}_")
 
-        # Now treat it exactly like a text message
+       # Add transcribed voice to history
+        add_to_history("user", f"[Voice] {text}")
+        
         decision = think(text)
         text_result, file_path = execute(decision)
+        
+        # Add response to history
+        add_to_history("assistant", text_result[:500])
+        
         save_conversation(f"[Voice] {text}", text_result)
-        await send_reply(update, text_result, file_path)
+        await send_reply(update, text_result, file_path) 
 
     except Exception as e:
         await send_reply(update, f"❌ Voice error: {str(e)}")
