@@ -1,0 +1,8 @@
+python-telegram-bot==21.10
+ollama
+psutil
+chromadb
+groq
+PyGithub
+ddgs
+python-dotenv
