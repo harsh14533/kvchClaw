@@ -12,10 +12,55 @@ from telegram.ext import (
     filters, ContextTypes
 )
 from dotenv import load_dotenv
+from github import Github, Auth
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 import whisper
-import google.generativeai as genai
+from google import genai as google_genai
 from mistralai import Mistral
+
+# ── Health Check ──────────────────────────────────────────
+import threading
+import time
+
+health_status = {
+    "last_heartbeat": datetime.now(),
+    "messages_handled": 0,
+    "errors": 0,
+    "start_time": datetime.now()
+}
+
+def update_heartbeat():
+    """Called every time bot successfully handles something"""
+    health_status["last_heartbeat"] = datetime.now()
+
+def get_uptime() -> str:
+    """Calculate how long bot has been running"""
+    delta = datetime.now() - health_status["start_time"]
+    hours = int(delta.total_seconds() // 3600)
+    minutes = int((delta.total_seconds() % 3600) // 60)
+    return f"{hours}h {minutes}m"
+
+def health_check_loop():
+    """
+    Runs in background thread.
+    If bot freezes for more than 5 minutes — force restart.
+    """
+    while True:
+        time.sleep(60)  # Check every minute
+        last = health_status["last_heartbeat"]
+        seconds_since = (datetime.now() - last).total_seconds()
+        
+        if seconds_since > 300:  # 5 minutes with no activity
+            print(f"💀 Bot appears frozen ({seconds_since:.0f}s since last heartbeat)")
+            print("🔄 Forcing restart...")
+            os._exit(1)  # Watchdog will restart it
+
+# Start health check in background
+health_thread = threading.Thread(
+    target=health_check_loop,
+    daemon=True
+)
+health_thread.start()
 
 # ── Load Config ───────────────────────────────────────────
 load_dotenv()
@@ -31,13 +76,13 @@ GITHUB_USERNAME = os.getenv("GITHUB_USERNAME")
 groq_client = Groq(api_key=GROQ_API_KEY) if GROQ_API_KEY else None
 
 if GEMINI_API_KEY:
-    genai.configure(api_key=GEMINI_API_KEY)
-    gemini_model = genai.GenerativeModel("gemini-1.5-flash")
+    gemini_client = google_genai.Client(api_key=GEMINI_API_KEY)
 else:
-    gemini_model = None
+    gemini_client = None
 
 mistral_client = Mistral(api_key=MISTRAL_API_KEY) if MISTRAL_API_KEY else None
-github_client = Github(GITHUB_TOKEN) if GITHUB_TOKEN else None
+from github import Auth
+github_client = Github(auth=Auth.Token(GITHUB_TOKEN)) if GITHUB_TOKEN else None
 
 # ── API Status Tracking ───────────────────────────────────
 api_stats = {
@@ -122,28 +167,20 @@ def call_groq(messages: list) -> str:
     return response.choices[0].message.content.strip()
 
 def call_gemini(messages: list) -> str:
-    """Google Gemini — backup 1"""
-    # Convert to Gemini format
-    history = []
-    system_content = ""
-
+    """Google Gemini — backup 1 (new SDK)"""
+    # Build prompt from messages
+    prompt = ""
     for msg in messages:
         if msg["role"] == "system":
-            system_content = msg["content"]
+            prompt += f"System: {msg['content']}\n\n"
         elif msg["role"] == "user":
-            history.append({"role": "user",
-                           "parts": [msg["content"]]})
+            prompt += f"User: {msg['content']}\n"
         elif msg["role"] == "assistant":
-            history.append({"role": "model",
-                           "parts": [msg["content"]]})
+            prompt += f"Assistant: {msg['content']}\n"
 
-    # Last user message
-    last_user = history.pop()["parts"][0]
-
-    chat = gemini_model.start_chat(history=history)
-    response = chat.send_message(
-        f"{system_content}\n\n{last_user}"
-        if system_content else last_user
+    response = gemini_client.models.generate_content(
+        model="gemini-2.0-flash",
+        contents=prompt
     )
     return response.text.strip()
 
@@ -218,7 +255,7 @@ Available actions:
     apis = []
     if groq_client:
         apis.append(("groq", call_groq))
-    if gemini_model:
+    if gemini_client:
         apis.append(("gemini", call_gemini))
     if mistral_client:
         apis.append(("mistral", call_mistral))
@@ -587,6 +624,21 @@ def execute(decision: dict) -> tuple:
         return "🧹 History cleared! Fresh start.", None
     elif action == "API_STATUS":
         return get_api_status(), None
+    elif action == "BOT_STATUS":
+        uptime = get_uptime()
+        msgs = health_status["messages_handled"]
+        errors = health_status["errors"]
+        last = health_status["last_heartbeat"].strftime("%H:%M:%S")
+        return f"""🤖 *kvchClaw Status*
+
+✅ Bot is alive and healthy
+⏱️ Uptime: {uptime}
+💬 Messages handled: {msgs}
+❌ Errors: {errors}
+💓 Last heartbeat: {last}
+
+🔌 APIs:
+{get_api_status()}""", None
     elif action == "CHAT":
         return value, None
     else:
@@ -679,6 +731,10 @@ async def handle_message(update: Update,
     user_message = update.message.text
     await send_reply(update, "🤔 thinking...")
     try:
+        # Update heartbeat so watchdog knows we're alive
+        update_heartbeat()
+        health_status["messages_handled"] += 1
+        
         add_to_history("user", user_message)
         decision = think(user_message)
         text_result, file_path = execute(decision)
@@ -694,6 +750,9 @@ async def handle_voice(update: Update,
         return
     await send_reply(update, "🎤 Transcribing...")
     try:
+        update_heartbeat()
+        health_status["messages_handled"] += 1
+        
         voice = update.message.voice
         file = await context.bot.get_file(voice.file_id)
         voice_path = os.path.expanduser("~/myclaw_voice.ogg")
@@ -728,7 +787,7 @@ def main():
     print("=" * 40)
     print("🤖 kvchClaw Starting...")
     print(f"⚡ Groq:    {'✅' if groq_client else '❌'}")
-    print(f"🔮 Gemini:  {'✅' if gemini_model else '❌'}")
+    print(f"🔮 Gemini:  {'✅' if gemini_client else '❌'}")
     print(f"🌊 Mistral: {'✅' if mistral_client else '❌'}")
     print(f"🐙 GitHub:  {'✅' if github_client else '❌'}")
     print("🎤 Voice:   ✅")
@@ -737,9 +796,10 @@ def main():
     app = (
         Application.builder()
         .token(TELEGRAM_TOKEN)
-        .connect_timeout(30)
-        .read_timeout(30)
-        .write_timeout(30)
+        .connect_timeout(60)
+        .read_timeout(60)
+        .write_timeout(60)
+        .pool_timeout(60)
         .post_init(post_init)
         .build()
     )
@@ -752,7 +812,8 @@ def main():
     ))
 
     print("✅ Ready! Send a message or voice note.")
-    app.run_polling()
+    app.run_polling(drop_pending_updates=True,
+        allowed_updates=Update.ALL_TYPES)
 
 if __name__ == "__main__":
     main()
