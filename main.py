@@ -609,7 +609,6 @@ async def scheduled_system_check(bot):
             await bot.send_message(chat_id=ALLOWED_USER_ID, text="System Alert\n\n" + "\n".join(warnings))
     except Exception as e:
         print("Scheduled check failed: " + str(e))
-
 async def scheduled_morning_summary(bot):
     try:
         cpu = psutil.cpu_percent(interval=1)
@@ -627,6 +626,17 @@ async def scheduled_morning_summary(bot):
     except Exception as e:
         print("Morning summary failed: " + str(e))
 
+async def scheduled_evening_changelog(bot):
+    try:
+        from plugins.changelog import generate_report
+        report = generate_report(days=1)
+        await bot.send_message(
+            chat_id=ALLOWED_USER_ID,
+            text="Evening Summary\n\n" + report
+        )
+    except Exception as e:
+        print("Evening changelog failed: " + str(e))
+
 async def scheduled_api_check(bot):
     try:
         from plugins.api_tracker import check_limits_warning
@@ -636,6 +646,7 @@ async def scheduled_api_check(bot):
             await bot.send_message(chat_id=ALLOWED_USER_ID, text=msg)
     except Exception as e:
         print("API check failed: " + str(e))
+
 async def post_init(application):
     scheduler = AsyncIOScheduler()
     scheduler.add_job(
