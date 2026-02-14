@@ -1,36 +1,34 @@
-#!/usr/bin/env python3
+#!/home/cia/myclaw/venv/bin/python3
 # -*- coding: utf-8 -*-
-# kvchClaw Terminal Interface
-# Usage: python ask.py <your question>
-# Or:    ./ask.py <your question>
-
 import sys
 import os
-from dotenv import load_dotenv
+sys.path.insert(0, os.path.expanduser("~/myclaw"))
+os.chdir(os.path.expanduser("~/myclaw"))
 
-# Load environment
+from dotenv import load_dotenv
 load_dotenv(os.path.expanduser("~/myclaw/.env"))
 
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 MISTRAL_API_KEY = os.getenv("MISTRAL_API_KEY")
 
-def think(question):
-    system = (
-        "You are kvchClaw, a personal AI agent on Ubuntu Linux.\n"
-        "Answer the user's question directly and concisely.\n"
-        "If they ask to run a command, show the exact command.\n"
-        "If they ask to write code, write complete working code.\n"
-        "Keep answers short and practical for terminal use.\n"
-        "No markdown formatting — plain text only.\n"
-    )
+# Load plugins
+from plugins.loader import load_plugins, find_plugin
+PLUGINS = load_plugins()
 
+def call_ai(question):
     messages = [
-        {"role": "system", "content": system},
+        {
+            "role": "system",
+            "content": (
+                "You are kvchClaw, a personal AI agent on Ubuntu Linux.\n"
+                "Answer directly and concisely for terminal use.\n"
+                "Plain text only, no markdown formatting.\n"
+            )
+        },
         {"role": "user", "content": question}
     ]
 
-    # Try Groq first
     if GROQ_API_KEY:
         try:
             from groq import Groq
@@ -41,24 +39,21 @@ def think(question):
                 max_tokens=1024
             )
             return response.choices[0].message.content.strip()
-        except Exception as e:
-            print("Groq failed, trying next...")
+        except:
+            pass
 
-    # Try Gemini
     if GEMINI_API_KEY:
         try:
             from google import genai as google_genai
             client = google_genai.Client(api_key=GEMINI_API_KEY)
-            prompt = system + "\n\nUser: " + question
             response = client.models.generate_content(
                 model="gemini-2.0-flash",
-                contents=prompt
+                contents=messages[0]["content"] + "\n\n" + question
             )
             return response.text.strip()
-        except Exception as e:
-            print("Gemini failed, trying next...")
+        except:
+            pass
 
-    # Try Mistral
     if MISTRAL_API_KEY:
         try:
             from mistralai import Mistral
@@ -69,10 +64,9 @@ def think(question):
                 max_tokens=1024
             )
             return response.choices[0].message.content.strip()
-        except Exception as e:
-            print("Mistral failed, trying local...")
+        except:
+            pass
 
-    # Try local Ollama
     try:
         import ollama
         response = ollama.chat(
@@ -81,10 +75,36 @@ def think(question):
         )
         return response["message"]["content"].strip()
     except:
-        return "All APIs unavailable. Check your .env file."
+        return "All APIs unavailable."
+
+def handle_question(question):
+    # Check plugins first
+    plugin_keywords = {
+        "changelog": ["changelog", "what did i work on", "weekly summary",
+                      "daily summary", "work summary", "what did i do"],
+        "ORGANIZE_FOLDER": ["organize", "sort files", "tidy up"],
+        "SYSWHISPER": ["why is my pc", "suspicious", "what happened",
+                       "pc report", "pc intelligence", "network activity"],
+        "WEATHER": ["weather", "temperature", "forecast"],
+        "NOTES": ["note", "my notes", "show notes"],
+        "CLEAN_SYSTEM": ["clean system", "free space", "clear cache"],
+    }
+
+    question_lower = question.lower()
+
+    for plugin_name, keywords in plugin_keywords.items():
+        for keyword in keywords:
+            if keyword in question_lower:
+                plugin = find_plugin(PLUGINS, plugin_name, question)
+                if plugin:
+                    result, _ = plugin.execute(question)
+                    return result
+
+    # Fall back to AI
+    return call_ai(question)
 
 def interactive_mode():
-    print("kvchClaw Terminal — type your question or 'exit' to quit")
+    print("kvchClaw Terminal - type your question or 'exit' to quit")
     print("-" * 50)
     while True:
         try:
@@ -94,8 +114,8 @@ def interactive_mode():
             if question.lower() in ["exit", "quit", "bye"]:
                 print("Goodbye!")
                 break
-            print("kvchClaw: thinking...")
-            answer = think(question)
+            print("thinking...")
+            answer = handle_question(question)
             print("kvchClaw: " + answer)
             print()
         except KeyboardInterrupt:
@@ -103,14 +123,12 @@ def interactive_mode():
             break
 
 def single_question_mode(question):
-    answer = think(question)
+    answer = handle_question(question)
     print(answer)
 
 if __name__ == "__main__":
     if len(sys.argv) > 1:
-        # Direct question mode: ask.py what is my ip
         question = " ".join(sys.argv[1:])
         single_question_mode(question)
     else:
-        # Interactive chat mode
         interactive_mode()
