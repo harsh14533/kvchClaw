@@ -93,7 +93,7 @@ def get_repo_status(repo_path):
     if ahead and ahead.isdigit() and int(ahead) > 0:
         status["issues"].append(ahead + " unpushed commits")
 
-    last_commit, _ = run_git("log -1 --format=%ar: %s 2>/dev/null", repo_path)
+    last_commit, _ = run_git('log -1 --format="%ar: %s" 2>/dev/null', repo_path)
     status["last_commit"] = last_commit or "no commits yet"
 
     return status
