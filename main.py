@@ -131,6 +131,11 @@ def call_groq(messages):
         messages=messages,
         max_tokens=1024
     )
+    try:
+        from plugins.api_tracker import record_api_call
+        record_api_call("groq")
+    except:
+        pass
     return response.choices[0].message.content.strip()
 
 def call_gemini(messages):
@@ -142,11 +147,28 @@ def call_gemini(messages):
             prompt += "User: " + msg["content"] + "\n"
         elif msg["role"] == "assistant":
             prompt += "Assistant: " + msg["content"] + "\n"
-    response = gemini_client.models.generate_content(model="gemini-2.0-flash", contents=prompt)
+    response = gemini_client.models.generate_content(
+        model="gemini-2.0-flash",
+        contents=prompt
+    )
+    try:
+        from plugins.api_tracker import record_api_call
+        record_api_call("gemini")
+    except:
+        pass
     return response.text.strip()
 
 def call_mistral(messages):
-    response = mistral_client.chat.complete(model="mistral-small-latest", messages=messages, max_tokens=1024)
+    response = mistral_client.chat.complete(
+        model="mistral-small-latest",
+        messages=messages,
+        max_tokens=1024
+    )
+    try:
+        from plugins.api_tracker import record_api_call
+        record_api_call("mistral")
+    except:
+        pass
     return response.choices[0].message.content.strip()
 
 def call_local(messages):
@@ -605,10 +627,33 @@ async def scheduled_morning_summary(bot):
     except Exception as e:
         print("Morning summary failed: " + str(e))
 
+async def scheduled_api_check(bot):
+    try:
+        from plugins.api_tracker import check_limits_warning
+        warnings = check_limits_warning()
+        if warnings:
+            msg = "API Limit Warning\n\n" + "\n".join(warnings)
+            await bot.send_message(chat_id=ALLOWED_USER_ID, text=msg)
+    except Exception as e:
+        print("API check failed: " + str(e))
 async def post_init(application):
     scheduler = AsyncIOScheduler()
-    scheduler.add_job(scheduled_system_check, "interval", hours=1, args=[application.bot])
-    scheduler.add_job(scheduled_morning_summary, "cron", hour=9, minute=0, args=[application.bot])
+    scheduler.add_job(
+        scheduled_system_check, "interval",
+        hours=1, args=[application.bot]
+    )
+    scheduler.add_job(
+        scheduled_morning_summary, "cron",
+        hour=9, minute=0, args=[application.bot]
+    )
+    scheduler.add_job(
+        scheduled_evening_changelog, "cron",
+        hour=23, minute=0, args=[application.bot]
+    )
+    scheduler.add_job(
+        scheduled_api_check, "interval",
+        hours=3, args=[application.bot]
+    )
     scheduler.start()
     print("Scheduler running")
 
