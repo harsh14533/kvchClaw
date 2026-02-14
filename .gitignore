@@ -8,3 +8,4 @@ myclaw_code/
 *.jpg
 .vscode/
 *.log
+syswhisper.db
