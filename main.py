@@ -236,7 +236,7 @@ def run_command(command):
         if d in command:
             return "Blocked dangerous command"
     try:
-        result = subprocess.run(command, shell=True, capture_output=True, text=True, timeout=30)
+        result = subprocess.run(command, shell=True, capture_output=True, text=True, timeout=60)
         output = result.stdout or result.stderr
         return output[:3000] if output else "No output"
     except subprocess.TimeoutExpired:
