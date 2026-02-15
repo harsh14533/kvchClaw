@@ -260,9 +260,16 @@ def run_python_code(code):
 
 def take_screenshot():
     try:
-        path = os.path.expanduser("~/myclaw_screenshot.png")
+        import glob
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        path = os.path.expanduser("~/myclaw_screenshot_" + timestamp + ".png")
         subprocess.run("DISPLAY=:0 scrot " + path, shell=True, capture_output=True)
-        return path if os.path.exists(path) else None
+        if os.path.exists(path):
+            old_shots = sorted(glob.glob(os.path.expanduser("~/myclaw_screenshot_*.png")))
+            while len(old_shots) > 5:
+                os.remove(old_shots.pop(0))
+            return path
+        return None
     except:
         return None
 
@@ -316,9 +323,55 @@ def control_pc(command):
             subprocess.run("DISPLAY=:0 i3lock", shell=True)
             return "Screen locked"
         elif "open" in cmd:
-            app = cmd.replace("open", "").strip()
-            subprocess.Popen("DISPLAY=:0 " + app, shell=True)
-            return "Opening " + app
+            import re
+            # Extract URL if present
+            urls = re.findall(r'https?://\S+|www\.\S+', command)
+            if urls:
+                url = urls[0]
+                subprocess.Popen("DISPLAY=:0 xdg-open " + url, shell=True)
+                return "Opening " + url
+
+            # Extract app name — remove filler words
+            app = command.lower()
+            for word in ["open", "launch", "start", "in", "brave-browser",
+                         "brave", "firefox", "chrome", "browser"]:
+                app = app.replace(word, "").strip()
+
+            # Check if it's a website name
+            websites = {
+                "youtube": "https://youtube.com",
+                "twitch": "https://twitch.tv",
+                "github": "https://github.com",
+                "google": "https://google.com",
+                "reddit": "https://reddit.com",
+                "twitter": "https://twitter.com",
+                "netflix": "https://netflix.com",
+                "spotify": "https://open.spotify.com",
+            }
+
+            # Check which browser to use
+            browser = "xdg-open"
+            original = command.lower()
+            if "brave" in original:
+                browser = "brave-browser"
+            elif "firefox" in original:
+                browser = "firefox"
+            elif "chrome" in original:
+                browser = "google-chrome"
+
+            for site, url in websites.items():
+                if site in app:
+                    subprocess.Popen(
+                        "DISPLAY=:0 " + browser + " " + url,
+                        shell=True
+                    )
+                    return "Opening " + site + " in " + browser
+
+            # Regular app
+            if app:
+                subprocess.Popen("DISPLAY=:0 " + app, shell=True)
+                return "Opening " + app
+            return "Could not understand what to open"
         elif "close" in cmd or "kill" in cmd:
             app = cmd.replace("close", "").replace("kill", "").strip()
             subprocess.run("pkill " + app, shell=True)
@@ -409,36 +462,56 @@ def think(user_message):
         memory_context += "\nKnown facts:\n" + known_facts + "\n"
     if past_convos:
         memory_context += "\n" + past_convos + "\n"
+
     plugin_actions = get_plugin_prompts(PLUGINS)
+
     system = (
         "You are kvchClaw, an autonomous AI agent on Ubuntu Linux.\n"
-        "You control the user's PC, search web, manage GitHub, and remember things.\n"
+        "You EXECUTE tasks directly. Never explain. Never show commands. Just do it.\n\n"
         + memory_context +
-        "\nReply ONLY in this exact format:\n\n"
+        "Reply ONLY in this exact format — no other text:\n"
         "ACTION: <action>\n"
         "VALUE: <value>\n\n"
-        "Built-in actions:\n"
-        "- RUN_COMMAND: run bash/terminal command\n"
-        "- GET_STATS: system CPU/RAM/disk info\n"
-        "- GET_PROCESSES: show top processes\n"
-        "- WRITE_AND_RUN_CODE: write and run python code\n"
-        "- WEB_SEARCH: search the internet\n"
-        "- TAKE_SCREENSHOT: take screenshot\n"
-        "- CONTROL_PC: control PC apps volume workspace lock\n"
-        "- FILE_READ: read a file\n"
-        "- FILE_LIST: list files in directory\n"
-        "- GITHUB_LIST: list github repos\n"
-        "- GITHUB_PUSH: push code filename|code|repo\n"
-        "- REMEMBER_FACT: save fact about user\n"
-        "- CLEAR_HISTORY: clear conversation history\n"
-        "- API_STATUS: show API status\n"
-        "- BOT_STATUS: show bot health\n"
-        "- CHAT: general conversation\n"
-        "\nPlugin actions:\n" + plugin_actions + "\n"
+        "DECISION RULES — follow exactly:\n\n"
+        "System tasks → RUN_COMMAND:\n"
+        "  update packages → sudo apt update && sudo apt upgrade -y\n"
+        "  install X → sudo apt install -y X\n"
+        "  what is my ip → curl -s ifconfig.me\n"
+        "  disk space → df -h\n"
+        "  free memory → free -h\n"
+        "  list running services → systemctl list-units --type=service --state=running\n"
+        "  any terminal task → exact bash command\n\n"
+        "PC control → CONTROL_PC:\n"
+        "  open X app → open X\n"
+        "  open website → xdg-open URL\n"
+        "  volume up/down/mute/set → volume command\n"
+        "  lock screen → lock\n"
+        "  workspace N → workspace N\n\n"
+        "Information → GET_STATS:\n"
+        "  system stats, cpu, ram, disk usage\n\n"
+        "Processes → GET_PROCESSES:\n"
+        "  top processes, what is using cpu/ram\n\n"
+        "Internet → WEB_SEARCH:\n"
+        "  news, search, latest, current events, anything needing internet\n\n"
+        "Code → WRITE_AND_RUN_CODE:\n"
+        "  write a script, create a program, automate something\n\n"
+        "Screenshot → TAKE_SCREENSHOT:\n"
+        "  take screenshot, show my screen, capture screen\n\n"
+        "Files → FILE_READ or FILE_LIST:\n"
+        "  read/show file contents → FILE_READ\n"
+        "  list/show directory → FILE_LIST\n\n"
+        "Memory → REMEMBER_FACT:\n"
+        "  remember X, my name is X, note that X\n\n"
+        "GitHub → GITHUB_LIST or GITHUB_PUSH\n\n"
+        "Status → BOT_STATUS or API_STATUS\n\n"
+        "CHAT → ONLY when nothing above applies. Pure conversation only.\n\n"
+        "Plugin actions:\n" + plugin_actions + "\n"
     )
+
     messages = [{"role": "system", "content": system}]
     messages.extend(get_history())
     messages.append({"role": "user", "content": user_message})
+
     apis = []
     if groq_client:
         apis.append(("groq", call_groq))
@@ -447,16 +520,21 @@ def think(user_message):
     if mistral_client:
         apis.append(("mistral", call_mistral))
     apis.append(("local", call_local))
+
     for api_name, api_func in apis:
         try:
             reply = api_func(messages)
             api_stats[api_name]["calls"] += 1
             print("Used " + api_name)
-            return _parse_reply(reply)
+            decision = _parse_reply(reply)
+            # Run through safety classifier
+            decision = classify_fallback(user_message, decision)
+            return decision
         except Exception as e:
             api_stats[api_name]["fails"] += 1
             print(api_name + " failed: " + str(e))
             continue
+
     return {"action": "CHAT", "value": "All APIs unavailable."}
 
 def _parse_reply(reply):
@@ -475,6 +553,82 @@ def _parse_reply(reply):
     if value_lines:
         value = value + "\n" + "\n".join(value_lines)
     return {"action": action, "value": value}
+def classify_fallback(user_message, decision):
+    # If AI already picked a real action, trust it
+    if decision["action"] != "CHAT":
+        return decision
+
+    msg = user_message.lower().strip()
+
+    # System commands — should always be RUN_COMMAND
+    command_patterns = {
+        "update": "sudo apt update && sudo apt upgrade -y",
+        "upgrade": "sudo apt update && sudo apt upgrade -y",
+        "update and upgrade": "sudo apt update && sudo apt upgrade -y",
+        "what is my ip": "curl -s ifconfig.me",
+        "my ip": "curl -s ifconfig.me",
+        "ip address": "curl -s ifconfig.me",
+        "disk space": "df -h",
+        "free space": "df -h",
+        "free memory": "free -h",
+        "memory usage": "free -h",
+        "running services": "systemctl list-units --type=service --state=running",
+        "list services": "systemctl list-units --type=service --state=running",
+        "open ports": "ss -tulnp",
+        "network interfaces": "ip addr show",
+        "who is logged in": "who",
+        "uptime": "uptime",
+        "hostname": "hostname",
+        "kernel version": "uname -r",
+        "os version": "cat /etc/os-release",
+        "environment variables": "env",
+        "reboot": "sudo reboot",
+        "shutdown": "sudo shutdown -h now",
+    }
+
+    for keyword, command in command_patterns.items():
+        if keyword in msg:
+            print("Classifier override: RUN_COMMAND for: " + keyword)
+            return {"action": "RUN_COMMAND", "value": command}
+
+    # PC control — should be CONTROL_PC
+    control_patterns = [
+        "open ", "close ", "kill ", "launch ",
+        "volume up", "volume down", "mute",
+        "lock screen", "workspace "
+    ]
+    for pattern in control_patterns:
+        if pattern in msg:
+            print("Classifier override: CONTROL_PC")
+            return {"action": "CONTROL_PC", "value": user_message}
+
+    # Stats — should be GET_STATS
+    stats_patterns = [
+        "cpu usage", "ram usage", "system stats",
+        "how much cpu", "how much ram", "system status"
+    ]
+    for pattern in stats_patterns:
+        if pattern in msg:
+            print("Classifier override: GET_STATS")
+            return {"action": "GET_STATS", "value": ""}
+
+    # Screenshot
+    if "screenshot" in msg or "take a screenshot" in msg:
+        print("Classifier override: TAKE_SCREENSHOT")
+        return {"action": "TAKE_SCREENSHOT", "value": ""}
+
+    # Web search
+    search_patterns = [
+        "search for", "look up", "find online",
+        "latest news", "what is happening", "current"
+    ]
+    for pattern in search_patterns:
+        if pattern in msg:
+            print("Classifier override: WEB_SEARCH")
+            return {"action": "WEB_SEARCH", "value": user_message}
+
+    # If still CHAT — keep it, it's probably genuine conversation
+    return decision
 
 def execute(decision):
     action = decision["action"]
