@@ -103,6 +103,7 @@ def print_help():
         ("git status all", "Check all your git repos"),
         ("save context", "Save current work context"),
         ("weather in X", "Get weather for any city"),
+        ("/terminal", "Show live financial markets terminal"),
     ]
 
     for cmd, desc in commands:
@@ -276,6 +277,17 @@ def handle_slash_command(cmd):
     elif cmd == "/context":
         response, _ = get_ai_response("save context")
         print_message("assistant", response)
+        return True
+    elif cmd == "/terminal" or cmd == "/markets":
+        try:
+            from plugins.financial_terminal import format_terminal_display
+            import time
+            console.print("[dim]Fetching live market data...[/dim]")
+            time.sleep(2)  # Give background thread time
+            response = format_terminal_display()
+            print_message("assistant", response)
+        except Exception as e:
+            console.print("[red]Error: " + str(e) + "[/red]")
         return True
 
     elif cmd == "/history":
